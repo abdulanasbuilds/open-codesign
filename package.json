@@ -29,6 +29,7 @@
     "docs:build": "pnpm --filter open-codesign-website build",
     "docs:preview": "pnpm --filter open-codesign-website preview",
     "smoke": "tsx scripts/smoke-models.ts",
+    "build:web": "pnpm --filter @open-codesign/desktop build",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "turbo run build && changeset publish"

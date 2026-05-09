@@ -2,7 +2,8 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/" }
+    { "source": "/assets/(.*)", "destination": "/apps/desktop/out/renderer/assets/$1" },
+    { "source": "/(.*)", "destination": "/apps/desktop/out/renderer/index.html" }
   ],
   "env": {
     "VITE_LIVE_PREVIEW_ARTIFACTS": "true"
