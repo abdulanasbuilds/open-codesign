@@ -340,21 +340,91 @@ function synthesizeWireModel(
  *
  * Lazy-imports pi-ai so the bundle is not loaded at app startup.
  */
+/**
+ * Resolves an API key for the given provider, checking options first,
+ * then environment variables, and finally falling back to OpenRouter
+ * if it's configured as a gateway.
+ */
+function resolveApiKey(
+  provider: string,
+  opts: GenerateOptions,
+): { apiKey: string; effectiveProvider: string; effectiveModelId?: string; effectiveBaseUrl?: string } {
+  const trimmed = opts.apiKey?.trim();
+  if (trimmed && trimmed.length > 0) {
+    return { apiKey: trimmed, effectiveProvider: provider };
+  }
+
+  // Check provider-specific environment variables
+  const envKeyMap: Record<string, string | string[]> = {
+    anthropic: 'ANTHROPIC_API_KEY',
+    openai: 'OPENAI_API_KEY',
+    google: ['GEMINI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY'],
+    openrouter: 'OPENROUTER_API_KEY',
+    deepseek: 'DEEPSEEK_API_KEY',
+    xai: 'XAI_API_KEY',
+    groq: 'GROQ_API_KEY',
+    mistral: 'MISTRAL_API_KEY',
+  };
+
+  const envVar = envKeyMap[provider];
+  if (envVar) {
+    const keys = Array.isArray(envVar) ? envVar : [envVar];
+    for (const key of keys) {
+      const val = process.env[key]?.trim();
+      if (val) {
+        return { apiKey: val, effectiveProvider: provider };
+      }
+    }
+  }
+
+  // Fallback to OPENROUTER_API_KEY as a gateway if available
+  const openRouterKey = process.env['OPENROUTER_API_KEY']?.trim();
+  if (openRouterKey && provider !== 'openrouter' && provider !== 'ollama') {
+    // Map standard provider model IDs to OpenRouter format if needed.
+    // OpenRouter models are usually 'provider/model-id'.
+    let modelPrefix = provider;
+    if (provider === 'google') modelPrefix = 'google';
+    // We'll return the OpenRouter key and signal that we're routing through OpenRouter.
+    return {
+      apiKey: openRouterKey,
+      effectiveProvider: 'openrouter',
+      effectiveBaseUrl: 'https://openrouter.ai/api/v1',
+    };
+  }
+
+  if (opts.allowKeyless === true) {
+    return { apiKey: 'open-codesign-keyless', effectiveProvider: provider };
+  }
+
+  throw new CodesignError(
+    `Missing API key for ${provider}. Configure ${envVar || 'it'} or OPENROUTER_API_KEY.`,
+    ERROR_CODES.PROVIDER_AUTH_MISSING,
+  );
+}
+
 export async function complete(
   model: ModelRef,
   messages: ChatMessage[],
   opts: GenerateOptions,
 ): Promise<GenerateResult> {
-  const trimmedApiKey = opts.apiKey.trim();
-  if (trimmedApiKey.length === 0 && opts.allowKeyless !== true) {
-    throw new CodesignError('Missing API key', ERROR_CODES.PROVIDER_AUTH_MISSING);
-  }
-  const apiKey = trimmedApiKey.length > 0 ? trimmedApiKey : 'open-codesign-keyless';
+  const {
+    apiKey,
+    effectiveProvider,
+    effectiveBaseUrl,
+  } = resolveApiKey(model.provider, opts);
+
+  const baseUrl = opts.baseUrl ?? effectiveBaseUrl ?? process.env['BASE_URL'];
 
   // Gemini's OpenAI-compat endpoint rejects the `models/` prefix that its own
   // /models listing returns (issue #175). Normalize on the wire only; Settings
   // keeps the prefixed form so provider/model UX stays in sync with /models.
-  const effectiveModelId = normalizeGeminiModelId(model.modelId, opts.baseUrl);
+  let effectiveModelId = normalizeGeminiModelId(model.modelId, baseUrl);
+
+  // If we are routing through OpenRouter but the model ID doesn't look like
+  // an OpenRouter ID (provider/model), try to prefix it.
+  if (effectiveProvider === 'openrouter' && !effectiveModelId.includes('/')) {
+    effectiveModelId = `${model.provider}/${effectiveModelId}`;
+  }
 
   const pi = (await import('@mariozechner/pi-ai')) as unknown as {
     getModel: (provider: string, modelId: string) => PiModel | undefined;
@@ -373,15 +443,15 @@ export async function complete(
     ) => Promise<PiAssistantMessage>;
   };
 
-  let piModel = pi.getModel(model.provider, effectiveModelId);
+  let piModel = pi.getModel(effectiveProvider, effectiveModelId);
   if (!piModel) {
     if (opts.wire !== undefined) {
-      piModel = synthesizeWireModel(model.provider, effectiveModelId, opts.wire, opts.baseUrl);
-    } else if (model.provider === 'openrouter') {
+      piModel = synthesizeWireModel(effectiveProvider, effectiveModelId, opts.wire, baseUrl);
+    } else if (effectiveProvider === 'openrouter') {
       piModel = synthesizeOpenRouterModel(effectiveModelId);
     } else {
       throw new CodesignError(
-        `Unknown model ${model.provider}:${model.modelId}`,
+        `Unknown model ${effectiveProvider}:${effectiveModelId} (original: ${model.provider}:${model.modelId})`,
         ERROR_CODES.PROVIDER_MODEL_UNKNOWN,
       );
     }
@@ -400,7 +470,7 @@ export async function complete(
   } = {
     apiKey,
   };
-  if (opts.baseUrl !== undefined) piOpts.baseUrl = opts.baseUrl;
+  if (baseUrl !== undefined) piOpts.baseUrl = baseUrl;
   if (opts.signal !== undefined) piOpts.signal = opts.signal;
   if (opts.maxTokens !== undefined) piOpts.maxTokens = opts.maxTokens;
   if (opts.reasoning !== undefined && opts.reasoning !== 'off') piOpts.reasoning = opts.reasoning;
