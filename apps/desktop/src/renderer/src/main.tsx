@@ -5,6 +5,12 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './index.css';
 import { installRendererLogBridge } from './lib/renderer-logger';
+import { initializeWebPolyfill } from './lib/web-polyfill';
+
+// Use web polyfill if running in a regular browser (Vercel deployment)
+if (!window.codesign) {
+  initializeWebPolyfill();
+}
 
 // Install as early as possible so errors during bootstrap are captured.
 installRendererLogBridge();
