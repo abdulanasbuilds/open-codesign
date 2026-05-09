@@ -1,9 +1,9 @@
 {
   "version": 2,
+  "outputDirectory": "apps/desktop/out/renderer",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/assets/(.*)", "destination": "/apps/desktop/out/renderer/assets/$1" },
-    { "source": "/(.*)", "destination": "/apps/desktop/out/renderer/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ],
   "env": {
     "VITE_LIVE_PREVIEW_ARTIFACTS": "true"
